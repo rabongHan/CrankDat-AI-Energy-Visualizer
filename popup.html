@@ -1,0 +1,20 @@
+<!doctype html>
+<meta charset="utf-8" />
+<style>
+  body { font: 13px/1.35 ui-sans-serif, system-ui, -apple-system; margin: 12px; width: 320px; }
+  h1 { font-size: 14px; margin: 10px 0 6px; }
+  .row { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 6px 0; border-bottom: 1px solid #eee; }
+  .muted { color: #6b7280; }
+  .big { font-size: 20px; font-weight: 700; }
+  hr { border: none; border-top: 1px solid #eee; margin: 10px 0; }
+</style>
+
+<h1>This chat total</h1>
+<div id="perchat" class="muted">Open a conversation to see the total.</div>
+
+<hr/>
+
+<h1>Recent Prompts</h1>
+<div id="list" class="muted">No data yet.</div>
+
+<script src="popup.js" type="module"></script>

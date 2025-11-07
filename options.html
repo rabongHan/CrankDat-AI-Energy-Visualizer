@@ -1,0 +1,15 @@
+<!doctype html>
+<meta charset="utf-8" />
+<style>
+  body{font:14px ui-sans-serif,system-ui,-apple-system;margin:16px;max-width:640px}
+  label{display:block;margin:10px 0 4px}
+  input{width:180px}
+  h1{font-size:18px}
+  small{color:#6b7280}
+</style>
+<h1>Prompt Energy Meter — Settings</h1>
+<label>Baseline Wh per 500 tokens</label><input id="base" type="number" step="0.01">
+<label>Datacenter PUE</label><input id="pue" type="number" step="0.01">
+<label>Chars per token (fallback)</label><input id="cpt" type="number" step="0.1">
+<p><small>Only Wh is computed. Adjust if you have better baselines.</small></p>
+<script src="options.js" type="module"></script>

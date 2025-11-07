@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Prompt Energy Meter",
+  "version": "0.1.1",
+  "description": "Estimate energy, CO₂e, and crank effort per ChatGPT prompt.",
+  "permissions": ["storage", "activeTab", "scripting"],
+  "host_permissions": [
+    "https://chat.openai.com/*",
+    "https://chatgpt.com/*"
+  ],
+  "action": { "default_title": "Prompt Energy Meter", "default_popup": "popup.html" },
+  "options_page": "options.html",
+  "background": { "service_worker": "service-worker.js" },
+  "content_scripts": [{
+    "matches": [
+      "https://chat.openai.com/*",
+      "https://chatgpt.com/*"
+    ],
+    "js": ["content.js"],
+    "css": ["overlay.css"],
+    "run_at": "document_idle"
+  }]
+}

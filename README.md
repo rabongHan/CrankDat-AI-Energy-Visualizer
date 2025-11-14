@@ -119,3 +119,66 @@ crankdat/
 ### `overlay.css`
 
 * Minimal styling for a compact, high-contrast overlay card pinned to the bottom-right of the ChatGPT page.
+
+## 🛠️ Installation (Chrome Extension)
+Follow these steps to install the CrankDat Chrome extension locally.
+
+### **1. Clone the repository**
+```bash
+git clone https://github.com/rabongHan/CrankDat-AI-Energy-Visualizer.git
+cd crankdat
+````
+
+### **2. Open Chrome Extensions**
+
+Visit:
+
+```
+chrome://extensions/
+```
+
+### **3. Enable Developer Mode**
+
+In the top-right corner, toggle **Developer mode** on.
+
+### **4. Load the extension**
+
+Click:
+
+**Load unpacked** → select the project folder (the one containing `manifest.json`).
+
+Chrome will now load CrankDat as an unpacked extension.
+
+### **5. Open ChatGPT**
+
+Navigate to:
+
+* [https://chatgpt.com](https://chatgpt.com)
+  or
+* [https://chat.openai.com](https://chat.openai.com)
+
+You should now see:
+
+* A floating overlay showing **Prompt Energy (This Chat Total)**
+* A popup UI (click the extension icon) showing **energy log + token counts**
+
+You can test functionalities by:
+1. Ask ChatGPT any question
+2. Wait until the response finishes
+3. The overlay updates with the **Wh total** for the current chat
+4. Click the extension icon to view:
+
+   * Per-prompt energy usage
+   * Estimated tokens
+   * Color-coded chat grouping
+
+If the overlay doesn’t appear, refresh the page once.
+
+
+### **6. 🔄 Updating the Extension**
+
+If you modify any files, you must reload the extension:
+
+1. Go to `chrome://extensions/`
+2. Click the **Reload** button (🔄) on the CrankDat extension card
+

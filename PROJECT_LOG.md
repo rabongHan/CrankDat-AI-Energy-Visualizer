@@ -9,9 +9,10 @@ A living document tracking updates, fixes, and changes across the project.
 | Date       | Type       | Title/Short Description     | Status       | Owner     | Notes |
 |-----------|------------|------------------------------|--------------|-----------|-------|
 | 2025-11-06 | Update     | Added basecode             | Completed    | Jaewon    |       |
-| 2025-11-13 | Bug        | B-001            | In Progress  | Jaewon, Abdulla, Noor    |  |
-| 2025-11-13 | Bug        | B-002            | In progress  | Jaewon, Abdulla, Noor    |  |
+| 2025-11-13 | Bug        | B-001            | Completed  | Jaewon, Abdulla, Noor    |  |
+| 2025-11-13 | Bug        | B-002            | Completed  | Jaewon, Abdulla, Noor    |  |
 | 2025-11-13 | Update     | Implement context window token usage (average context window size?)             | In Progress    | Jaewon, Abdulla, Noor     |       |
+| 2025-11-29 | Fix     | Fixed B-001 and B-002            | Completed    | Jaewon, Abdulla, Noor     |  |
 ---
 
 ## 🔧 Detailed Logs

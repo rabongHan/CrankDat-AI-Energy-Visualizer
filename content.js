@@ -5,6 +5,9 @@ const DEFAULTS = {
   charsPerToken: 4              // fallback tokenizer heuristic
 };
 
+// Crank conversion: 15 crank rotations = 1 mWh
+const CRANKS_PER_MWH = 15;
+
 /* ===== Chrome API guards + safe helpers ===== */
 function getChromeApi() {
   try { if (typeof chrome !== 'undefined' && chrome?.runtime?.id) return chrome; } catch(_) {}
@@ -35,6 +38,22 @@ const getConvoId = () => {
   return m ? m[1] : null;
 };
 
+// Generate a stable message ID based on conversation and message position
+// (not content, so it doesn't change during streaming)
+function generateMessageId(convoId, messageIndex) {
+  return `${convoId || 'unknown'}_msg_${messageIndex}`;
+}
+
+// Check if ChatGPT is currently streaming a response
+function isStreaming() {
+  // Look for the "Stop generating" button or streaming indicators
+  const stopBtn = document.querySelector('[data-testid="stop-button"]');
+  const streamingIndicator = document.querySelector('[data-testid="streaming"]');
+  const thinkingIndicator = document.querySelector('.result-thinking');
+  
+  return !!(stopBtn || streamingIndicator || thinkingIndicator);
+}
+
 // Overlay UI
 const ensureOverlay = () => {
   let el = document.getElementById("pem-overlay");
@@ -42,8 +61,11 @@ const ensureOverlay = () => {
   el = document.createElement("div");
   el.id = "pem-overlay";
   el.innerHTML = `<div id="pem-card">
-      <div id="pem-title" style="font-variant:small-caps;">Prompt Energy (This Chat Total)</div>
-      <div id="pem-body"><span id="pem-wh">0.000</span> Wh</div>
+      <div id="pem-title" style="font-variant:small-caps;">Prompt Energy (This Chat)</div>
+      <div id="pem-body">
+        <div id="pem-energy"><span id="pem-wh">0.000</span> Wh <span id="pem-mwh" style="opacity:0.7;">(0.00 mWh)</span></div>
+        <div id="pem-crank" style="margin-top:4px;font-size:13px;">🔄 <span id="pem-cranks">0</span> cranks needed</div>
+      </div>
     </div>`;
   document.body.appendChild(el);
   return el;
@@ -55,91 +77,248 @@ const computeWh = ({ inTokens, outTokens, opts }) => {
   return whCore * opts.pue;
 };
 
+// Get all user prompt nodes on the page
+function getAllUserNodes() {
+  return document.querySelectorAll('[data-message-author-role="user"]');
+}
+
+// Get all assistant message nodes on the page
+function getAllAssistantNodes() {
+  return document.querySelectorAll('[data-message-author-role="assistant"], [data-testid="bot"]');
+}
+
+// Scan all messages currently on the page and calculate total energy
+async function scanAllMessagesOnPage() {
+  const opts = await safeSyncGet(DEFAULTS);
+  const userNodes = getAllUserNodes();
+  const assistantNodes = getAllAssistantNodes();
+  
+  let totalWh = 0;
+  let totalTokens = 0;
+  
+  for (let i = 0; i < assistantNodes.length; i++) {
+    const assistantNode = assistantNodes[i];
+    const outText = (assistantNode.innerText || assistantNode.textContent || "").trim();
+    
+    // Get corresponding user prompt (if available)
+    let inText = "";
+    if (i < userNodes.length) {
+      inText = (userNodes[i].innerText || userNodes[i].textContent || "").trim();
+    }
+    
+    const inTok = estimateTokens(inText, opts.charsPerToken);
+    const outTok = estimateTokens(outText, opts.charsPerToken);
+    const wh = computeWh({ inTokens: inTok, outTokens: outTok, opts });
+    
+    totalWh += wh;
+    totalTokens += inTok + outTok;
+  }
+  
+  return { totalWh, totalTokens, messageCount: assistantNodes.length };
+}
+
 async function updateOverlayTotal() {
   const overlay = ensureOverlay();
-  const { history = [] } = await safeLocalGet('history', []);
-  const cid = getConvoId();
-  const thisChat = cid ? history.filter(x => x.convoId === cid) : [];
-  const totalWh = thisChat.reduce((s, x) => s + (x.wh || 0), 0);
+  
+  // Scan all messages currently visible on the page
+  const { totalWh, totalTokens, messageCount } = await scanAllMessagesOnPage();
+  
+  // Calculate mWh and cranks
+  const totalMwh = totalWh * 1000;
+  const totalCranks = Math.ceil(totalMwh * CRANKS_PER_MWH);
+  
+  // Update Wh display
   overlay.querySelector("#pem-wh").textContent = totalWh.toFixed(3);
+  
+  // Update mWh display
+  const mwhEl = overlay.querySelector("#pem-mwh");
+  if (mwhEl) {
+    mwhEl.textContent = `(${totalMwh.toFixed(2)} mWh)`;
+  }
+  
+  // Update cranks display
+  const cranksEl = overlay.querySelector("#pem-cranks");
+  if (cranksEl) {
+    cranksEl.textContent = totalCranks.toLocaleString();
+  }
+  
+  // Update the title to show message count for clarity
+  const titleEl = overlay.querySelector("#pem-title");
+  if (titleEl && messageCount > 0) {
+    titleEl.textContent = `Prompt Energy (${messageCount} messages)`;
+  } else if (titleEl) {
+    titleEl.textContent = `Prompt Energy (This Chat)`;
+  }
 }
 
-/* ===== Robust logging (once per assistant message) ===== */
-let lastPromptAtSend = "";
+/* ===== State tracking ===== */
 let lastConvoId = null;
-let lastLoggedNode = null;
+let lastMessageCount = 0;
+let updateDebounceTimer = null;
+let loggedMessageIds = new Set(); // Track which messages we've already logged (by unique ID)
 
-// capture typed prompt right when user submits (Enter without Shift)
-function setupInputHook() {
-  const inputEl = document.querySelector("textarea, [contenteditable='true']");
-  if (!inputEl) return;
-  inputEl.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      lastPromptAtSend = (inputEl.value || inputEl.innerText || "").trim();
-    }
-  }, { capture: true });
+// Debounced update to avoid too many recalculations during streaming
+function scheduleOverlayUpdate(delay = 300) {
+  if (updateDebounceTimer) clearTimeout(updateDebounceTimer);
+  updateDebounceTimer = setTimeout(() => {
+    updateOverlayTotal();
+  }, delay);
 }
 
-// find the latest assistant bubble
-function getLatestAssistantNode() {
-  const nodes = document.querySelectorAll('[data-message-author-role="assistant"], [data-testid="bot"]');
-  return nodes.length ? nodes[nodes.length - 1] : null;
-}
+// Track the last known text length to detect streaming
+let lastTotalTextLength = 0;
 
-async function logAssistantMessageIfNew() {
-  const node = getLatestAssistantNode();
-  if (!node) return;
-
-  // Only log if this is a new assistant message node (not the same DOM element)
-  if (node === lastLoggedNode) return;
-
-  // If it’s the same conversation but node text is empty (still streaming), wait
-  const outText = (node.innerText || node.textContent || "").trim();
-  if (!outText) return;
-
-  lastLoggedNode = node; // mark as logged
-
+// Log messages to storage (for the popup history view) with deduplication
+async function logMessagesToHistory() {
+  // Don't log while still streaming - wait for completion
+  if (isStreaming()) {
+    // Schedule another attempt after streaming might be done
+    setTimeout(logMessagesToHistory, 2000);
+    return;
+  }
+  
+  const userNodes = getAllUserNodes();
+  const assistantNodes = getAllAssistantNodes();
+  const convoId = getConvoId();
+  
+  if (assistantNodes.length === 0) return;
+  
   const opts = await safeSyncGet(DEFAULTS);
-  const inTok  = estimateTokens(lastPromptAtSend, opts.charsPerToken);
-  const outTok = estimateTokens(outText,        opts.charsPerToken);
-  const wh     = computeWh({ inTokens: inTok, outTokens: outTok, opts });
-
   const { history = [] } = await safeLocalGet('history', []);
-  history.push({
-    ts: Date.now(),
-    tokens: inTok + outTok,
-    wh,
-    url: location.href,
-    convoId: getConvoId()
+  
+  // Build a map of existing entries by messageId for updates
+  const existingEntryMap = new Map();
+  history.forEach((h, idx) => {
+    if (h.messageId) {
+      existingEntryMap.set(h.messageId, idx);
+    }
   });
-  await safeLocalSet({ history });
+  
+  let hasChanges = false;
+  
+  // Check each message on the page
+  for (let i = 0; i < assistantNodes.length; i++) {
+    const assistantNode = assistantNodes[i];
+    const outText = (assistantNode.innerText || assistantNode.textContent || "").trim();
+    
+    // Skip if still empty or too short
+    if (!outText || outText.length < 20) continue;
+    
+    // Generate stable ID for this message (doesn't change with content)
+    const messageId = generateMessageId(convoId, i);
+    
+    // Get corresponding user prompt
+    let inText = "";
+    if (i < userNodes.length) {
+      inText = (userNodes[i].innerText || userNodes[i].textContent || "").trim();
+    }
+    
+    const inTok = estimateTokens(inText, opts.charsPerToken);
+    const outTok = estimateTokens(outText, opts.charsPerToken);
+    const wh = computeWh({ inTokens: inTok, outTokens: outTok, opts });
+    const totalTokens = inTok + outTok;
+    
+    // Check if this message already exists in history
+    if (existingEntryMap.has(messageId)) {
+      // Update existing entry if the new values are larger (more complete)
+      const existingIdx = existingEntryMap.get(messageId);
+      const existing = history[existingIdx];
+      
+      if (totalTokens > existing.tokens) {
+        // Message has grown - update the entry
+        history[existingIdx] = {
+          ...existing,
+          tokens: totalTokens,
+          wh: wh,
+          ts: Date.now() // Update timestamp
+        };
+        hasChanges = true;
+      }
+    } else if (!loggedMessageIds.has(messageId)) {
+      // New message - add it
+      history.push({
+        ts: Date.now(),
+        tokens: totalTokens,
+        wh,
+        url: location.href,
+        convoId: convoId,
+        messageId: messageId
+      });
+      loggedMessageIds.add(messageId);
+      hasChanges = true;
+    }
+  }
+  
+  if (hasChanges) {
+    await safeLocalSet({ history });
+  }
+}
 
-  // Update overlay total for this chat
-  await updateOverlayTotal();
+// Debounce timer for history logging
+let logDebounceTimer = null;
 
-  // Reset captured prompt so next send is fresh
-  lastPromptAtSend = "";
+// Check if the number of messages has changed (indicates new message added or page loaded)
+function checkForMessageChanges() {
+  const assistantNodes = getAllAssistantNodes();
+  const currentCount = assistantNodes.length;
+  
+  // Calculate total text length to detect streaming updates
+  let totalTextLength = 0;
+  assistantNodes.forEach(node => {
+    totalTextLength += (node.innerText || node.textContent || "").length;
+  });
+  
+  // Update if message count changed or if text length changed significantly (streaming)
+  if (currentCount !== lastMessageCount || Math.abs(totalTextLength - lastTotalTextLength) > 50) {
+    lastMessageCount = currentCount;
+    lastTotalTextLength = totalTextLength;
+    scheduleOverlayUpdate(300); // Update overlay frequently during streaming
+    
+    // Debounce history logging - wait for text to stabilize
+    // Clear previous timer and set a new one
+    if (logDebounceTimer) clearTimeout(logDebounceTimer);
+    logDebounceTimer = setTimeout(() => {
+      logMessagesToHistory();
+    }, 2000); // Wait 2 seconds after last change before logging
+  }
 }
 
 /* ===== Observe DOM changes efficiently ===== */
 let observer;
 
 function setupObserver() {
-  const root = document.querySelector('[data-testid="conversation-turns"]') || document.body;
+  // Try multiple possible container selectors (ChatGPT updates their DOM structure)
+  const root = document.querySelector('[data-testid="conversation-turns"]') 
+            || document.querySelector('main')
+            || document.body;
 
-  // Mutation observer that reacts to message insertions (not every character)
+  // Mutation observer that reacts to message insertions and content changes
   observer = new MutationObserver((mutations) => {
-    // If any mutation adds an element that looks like an assistant bubble, check/log
+    let shouldUpdate = false;
+    
     for (const m of mutations) {
+      // Check for new nodes added
       if (m.addedNodes && m.addedNodes.length) {
-        // Debounce a little to allow final content to settle
-        setTimeout(logAssistantMessageIfNew, 250);
+        shouldUpdate = true;
+        break;
+      }
+      // Also check for text content changes (streaming)
+      if (m.type === 'characterData' || m.type === 'childList') {
+        shouldUpdate = true;
         break;
       }
     }
+    
+    if (shouldUpdate) {
+      checkForMessageChanges();
+    }
   });
 
-  observer.observe(root, { childList: true, subtree: true });
+  observer.observe(root, { 
+    childList: true, 
+    subtree: true, 
+    characterData: true 
+  });
 }
 
 /* ===== Handle SPA navigation (URL changes) ===== */
@@ -147,17 +326,38 @@ function handleUrlChange() {
   const cid = getConvoId();
   if (cid !== lastConvoId) {
     lastConvoId = cid;
-    lastLoggedNode = null;      // new chat, next assistant node is "new"
-    lastPromptAtSend = "";      // clear prompt snapshot
-    updateOverlayTotal();       // refresh overlay immediately
+    lastMessageCount = 0; // Reset count so we rescan on new chat
+    lastTotalTextLength = 0;
+    // Note: We don't reset loggedMessageIds - the messageId system handles dedup across reloads
+    
+    // Wait a bit for the new chat's messages to load, then update
+    setTimeout(() => {
+      updateOverlayTotal();
+      logMessagesToHistory(); // Log any existing messages in this chat
+    }, 800);
   }
 }
 
 function initUrlWatchers() {
-  // Watch history changes
+  // Watch history changes (back/forward)
   addEventListener("popstate", handleUrlChange);
-  // Poll occasionally in case the site uses pushState without popstate firing
-  setInterval(handleUrlChange, 500);
+  
+  // Intercept pushState and replaceState for SPA navigation
+  const originalPushState = history.pushState;
+  const originalReplaceState = history.replaceState;
+  
+  history.pushState = function(...args) {
+    originalPushState.apply(this, args);
+    setTimeout(handleUrlChange, 100);
+  };
+  
+  history.replaceState = function(...args) {
+    originalReplaceState.apply(this, args);
+    setTimeout(handleUrlChange, 100);
+  };
+  
+  // Also poll as a fallback (some SPAs use other methods)
+  setInterval(handleUrlChange, 1000);
 }
 
 /* ===== Init ===== */
@@ -166,11 +366,33 @@ function initOnceReady() {
     document.addEventListener('DOMContentLoaded', initOnceReady, { once: true });
     return;
   }
+  
+  // Create overlay immediately
   ensureOverlay();
-  updateOverlayTotal();
-  setupInputHook();
+  
+  // Set up observers and watchers
   setupObserver();
   initUrlWatchers();
+  
+  // Initialize conversation ID
+  lastConvoId = getConvoId();
+  
+  // Initial scan - wait a bit for ChatGPT to fully render messages
+  setTimeout(() => {
+    updateOverlayTotal();
+    logMessagesToHistory();
+  }, 1000);
+  
+  // Do another scan after more time in case messages load slowly
+  setTimeout(() => {
+    updateOverlayTotal();
+    logMessagesToHistory();
+  }, 3000);
+  
+  // Final pass to catch any remaining messages
+  setTimeout(() => {
+    logMessagesToHistory();
+  }, 5000);
 }
 
 initOnceReady();

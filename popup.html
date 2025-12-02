@@ -1,12 +1,17 @@
 <!doctype html>
 <meta charset="utf-8" />
 <style>
-  body { font: 13px/1.35 ui-sans-serif, system-ui, -apple-system; margin: 12px; width: 320px; }
+  body { font: 13px/1.35 ui-sans-serif, system-ui, -apple-system; margin: 12px; width: 340px; }
   h1 { font-size: 14px; margin: 10px 0 6px; }
-  .row { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 6px 0; border-bottom: 1px solid #eee; }
+  .row { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 8px 0; border-bottom: 1px solid #eee; align-items: center; }
   .muted { color: #6b7280; }
   .big { font-size: 20px; font-weight: 700; }
   hr { border: none; border-top: 1px solid #eee; margin: 10px 0; }
+  .clear-btn { 
+    background: #ef4444; color: white; border: none; padding: 6px 12px; 
+    border-radius: 4px; cursor: pointer; font-size: 12px; margin-top: 10px;
+  }
+  .clear-btn:hover { background: #dc2626; }
 </style>
 
 <h1>This chat total</h1>
@@ -16,5 +21,8 @@
 
 <h1>Recent Prompts</h1>
 <div id="list" class="muted">No data yet.</div>
+
+<hr/>
+<button id="clearBtn" class="clear-btn">Clear All History</button>
 
 <script src="popup.js" type="module"></script>
